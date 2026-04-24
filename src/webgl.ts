@@ -51,7 +51,11 @@ void main(){
   outColor = vec4(clamp(rgb, 0.0, 1.0), c.a * u_opacity);
 }`;
 
-function compile(gl: WebGL2RenderingContext, type: number, src: string): WebGLShader {
+function compile(
+  gl: WebGL2RenderingContext,
+  type: number,
+  src: string,
+): WebGLShader {
   const sh = gl.createShader(type)!;
   gl.shaderSource(sh, src);
   gl.compileShader(sh);
@@ -61,7 +65,11 @@ function compile(gl: WebGL2RenderingContext, type: number, src: string): WebGLSh
   return sh;
 }
 
-function link(gl: WebGL2RenderingContext, vs: WebGLShader, fs: WebGLShader): WebGLProgram {
+function link(
+  gl: WebGL2RenderingContext,
+  vs: WebGLShader,
+  fs: WebGLShader,
+): WebGLProgram {
   const p = gl.createProgram()!;
   gl.attachShader(p, vs);
   gl.attachShader(p, fs);
@@ -83,8 +91,13 @@ export interface ColorParams {
 }
 
 export const NEUTRAL_COLOR: ColorParams = {
-  brightness: 1, contrast: 1, saturation: 1, hue: 0,
-  tint: [0, 0, 0], tintAmount: 0, opacity: 1,
+  brightness: 1,
+  contrast: 1,
+  saturation: 1,
+  hue: 0,
+  tint: [0, 0, 0],
+  tintAmount: 0,
+  opacity: 1,
 };
 
 export function combineEffects(effects: EffectClip[]): ColorParams {
@@ -115,7 +128,11 @@ export function combineEffects(effects: EffectClip[]): ColorParams {
 export function hexToRgb(hex: string): [number, number, number] {
   const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
   if (!m) return [0, 0, 0];
-  return [parseInt(m[1], 16) / 255, parseInt(m[2], 16) / 255, parseInt(m[3], 16) / 255];
+  return [
+    parseInt(m[1], 16) / 255,
+    parseInt(m[2], 16) / 255,
+    parseInt(m[3], 16) / 255,
+  ];
 }
 
 export class Compositor {
@@ -126,7 +143,10 @@ export class Compositor {
   uLoc: Record<string, WebGLUniformLocation | null> = {};
 
   constructor(public canvas: HTMLCanvasElement) {
-    const gl = canvas.getContext("webgl2", { premultipliedAlpha: false, alpha: false });
+    const gl = canvas.getContext("webgl2", {
+      premultipliedAlpha: false,
+      alpha: false,
+    });
     if (!gl) throw new Error("WebGL2 not supported");
     this.gl = gl;
     const vs = compile(gl, gl.VERTEX_SHADER, VERT);
@@ -151,12 +171,8 @@ export class Compositor {
     gl.bindBuffer(gl.ARRAY_BUFFER, buf);
     // x,y, u,v — fullscreen quad
     const data = new Float32Array([
-      -1, -1, 0, 0,
-       1, -1, 1, 0,
-      -1,  1, 0, 1,
-      -1,  1, 0, 1,
-       1, -1, 1, 0,
-       1,  1, 1, 1,
+      -1, -1, 0, 0, 1, -1, 1, 0, -1, 1, 0, 1, -1, 1, 0, 1, 1, -1, 1, 0, 1, 1, 1,
+      1,
     ]);
     gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
     gl.enableVertexAttribArray(aPos);
@@ -166,7 +182,12 @@ export class Compositor {
     gl.bindVertexArray(null);
 
     gl.enable(gl.BLEND);
-    gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    gl.blendFuncSeparate(
+      gl.SRC_ALPHA,
+      gl.ONE_MINUS_SRC_ALPHA,
+      gl.ONE,
+      gl.ONE_MINUS_SRC_ALPHA,
+    );
   }
 
   resize(w: number, h: number): void {
@@ -213,7 +234,13 @@ export class Compositor {
     gl.uniform1f(this.uLoc.u_contrast, color.contrast);
     gl.uniform1f(this.uLoc.u_saturation, color.saturation);
     gl.uniform1f(this.uLoc.u_hue, (color.hue * Math.PI) / 180);
-    gl.uniform4f(this.uLoc.u_tint, color.tint[0], color.tint[1], color.tint[2], color.tintAmount);
+    gl.uniform4f(
+      this.uLoc.u_tint,
+      color.tint[0],
+      color.tint[1],
+      color.tint[2],
+      color.tintAmount,
+    );
     gl.uniform1f(this.uLoc.u_opacity, color.opacity);
     gl.drawArrays(gl.TRIANGLES, 0, 6);
     gl.bindVertexArray(null);
@@ -229,7 +256,12 @@ export class Compositor {
 }
 
 /** Render title clips onto a 2D context. */
-export function renderTitles(ctx: CanvasRenderingContext2D, w: number, h: number, titles: TitleClip[]): void {
+export function renderTitles(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  titles: TitleClip[],
+): void {
   ctx.save();
   for (const t of titles) {
     if (t.bgColor && t.bgColor !== "transparent") {

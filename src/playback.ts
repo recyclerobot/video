@@ -1,8 +1,19 @@
 // Real-time playback engine.
 // Drives video/audio elements based on the project's playhead and
 // composites every frame with the WebGL compositor.
-import type { Project, VideoClip, AudioClip, EffectClip, TitleClip } from "./types";
-import { Compositor, combineEffects, NEUTRAL_COLOR, renderTitles } from "./webgl";
+import type {
+  Project,
+  VideoClip,
+  AudioClip,
+  EffectClip,
+  TitleClip,
+} from "./types";
+import {
+  Compositor,
+  combineEffects,
+  NEUTRAL_COLOR,
+  renderTitles,
+} from "./webgl";
 import { getMediaElement, disposeClipElement } from "./media";
 
 export class PlaybackEngine {
@@ -15,7 +26,11 @@ export class PlaybackEngine {
   overlay: HTMLCanvasElement;
   overlayCtx: CanvasRenderingContext2D;
 
-  constructor(public project: Project, canvas: HTMLCanvasElement, overlay: HTMLCanvasElement) {
+  constructor(
+    public project: Project,
+    canvas: HTMLCanvasElement,
+    overlay: HTMLCanvasElement,
+  ) {
     this.comp = new Compositor(canvas);
     this.overlay = overlay;
     this.overlayCtx = overlay.getContext("2d")!;
@@ -85,7 +100,9 @@ export class PlaybackEngine {
         try {
           const el = await getMediaElement(c);
           el.pause();
-        } catch { /* element may not be loaded yet */ }
+        } catch {
+          /* element may not be loaded yet */
+        }
       }
     }
   }
@@ -99,7 +116,9 @@ export class PlaybackEngine {
       try {
         // Video clips reuse the cached <video> element used for rendering.
         const el: HTMLVideoElement | HTMLAudioElement | undefined =
-          c.kind === "video" ? videoElCache.get(c.id) : await getMediaElement(c);
+          c.kind === "video"
+            ? videoElCache.get(c.id)
+            : await getMediaElement(c);
         if (!el) continue;
         if (active) {
           const localElapsed = t - c.start;
@@ -116,14 +135,20 @@ export class PlaybackEngine {
             el.volume = (c as AudioClip).volume;
           }
           if (shouldPlay && el.paused) {
-            try { await el.play(); } catch { /* user gesture */ }
+            try {
+              await el.play();
+            } catch {
+              /* user gesture */
+            }
           } else if (!shouldPlay && !el.paused) {
             el.pause();
           }
         } else {
           if (!el.paused) el.pause();
         }
-      } catch { /* media not yet loaded */ }
+      } catch {
+        /* media not yet loaded */
+      }
     }
   }
 
@@ -142,7 +167,10 @@ export class PlaybackEngine {
     const trackIndex = new Map<string, number>();
     p.tracks.forEach((tr, i) => trackIndex.set(tr.id, i));
     const effectsActive: EffectClip[] = p.clips
-      .filter((c): c is EffectClip => c.kind === "effect" && t >= c.start && t < c.start + c.duration)
+      .filter(
+        (c): c is EffectClip =>
+          c.kind === "effect" && t >= c.start && t < c.start + c.duration,
+      )
       .filter((c) => {
         const tr = p.tracks.find((x) => x.id === c.trackId);
         return tr ? !tr.hidden : true;
@@ -158,10 +186,16 @@ export class PlaybackEngine {
         const eIdx = trackIndex.get(e.trackId) ?? 0;
         return eIdx < trIdx;
       });
-      const color = applicableEffects.length ? combineEffects(applicableEffects) : { ...NEUTRAL_COLOR };
+      const color = applicableEffects.length
+        ? combineEffects(applicableEffects)
+        : { ...NEUTRAL_COLOR };
 
       const clip = p.clips.find(
-        (c) => c.trackId === tr.id && c.kind === "video" && t >= c.start && t < c.start + c.duration,
+        (c) =>
+          c.trackId === tr.id &&
+          c.kind === "video" &&
+          t >= c.start &&
+          t < c.start + c.duration,
       ) as VideoClip | undefined;
       if (!clip) continue;
       // Frame source comes from the videoElCache populated by main.ts after preload.
@@ -175,9 +209,16 @@ export class PlaybackEngine {
     // Overlay (titles) — clear, then draw.
     this.overlayCtx.clearRect(0, 0, this.overlay.width, this.overlay.height);
     const titles = p.clips.filter(
-      (c): c is TitleClip => c.kind === "title" && t >= c.start && t < c.start + c.duration,
+      (c): c is TitleClip =>
+        c.kind === "title" && t >= c.start && t < c.start + c.duration,
     );
-    if (titles.length) renderTitles(this.overlayCtx, this.overlay.width, this.overlay.height, titles);
+    if (titles.length)
+      renderTitles(
+        this.overlayCtx,
+        this.overlay.width,
+        this.overlay.height,
+        titles,
+      );
   }
 
   disposeClip(clipId: string): void {

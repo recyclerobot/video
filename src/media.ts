@@ -79,7 +79,13 @@ export function disposeAll(): void {
 /** Probe a media File to extract duration / thumbnail / dimensions */
 export async function probeMedia(
   file: File,
-): Promise<{ duration: number; width?: number; height?: number; thumbnail?: string; type: "video" | "audio" }> {
+): Promise<{
+  duration: number;
+  width?: number;
+  height?: number;
+  thumbnail?: string;
+  type: "video" | "audio";
+}> {
   const isVideo = file.type.startsWith("video/");
   const url = URL.createObjectURL(file);
   try {
@@ -91,7 +97,11 @@ export async function probeMedia(
       v.preload = "auto";
       await new Promise<void>((res, rej) => {
         v.addEventListener("loadeddata", () => res(), { once: true });
-        v.addEventListener("error", () => rej(new Error("video probe failed")), { once: true });
+        v.addEventListener(
+          "error",
+          () => rej(new Error("video probe failed")),
+          { once: true },
+        );
       });
       // seek a small offset for a meaningful frame
       const seekTo = Math.min(0.3, (v.duration || 1) / 4);
@@ -99,9 +109,11 @@ export async function probeMedia(
         v.addEventListener("seeked", () => res(), { once: true });
         v.currentTime = seekTo;
       });
-      const w = 96, h = Math.max(1, Math.round((v.videoHeight / v.videoWidth) * w));
+      const w = 96,
+        h = Math.max(1, Math.round((v.videoHeight / v.videoWidth) * w));
       const canvas = document.createElement("canvas");
-      canvas.width = w; canvas.height = h;
+      canvas.width = w;
+      canvas.height = h;
       const ctx = canvas.getContext("2d")!;
       ctx.drawImage(v, 0, 0, w, h);
       const thumbnail = canvas.toDataURL("image/jpeg", 0.7);
@@ -119,7 +131,11 @@ export async function probeMedia(
       a.preload = "auto";
       await new Promise<void>((res, rej) => {
         a.addEventListener("loadedmetadata", () => res(), { once: true });
-        a.addEventListener("error", () => rej(new Error("audio probe failed")), { once: true });
+        a.addEventListener(
+          "error",
+          () => rej(new Error("audio probe failed")),
+          { once: true },
+        );
       });
       return { duration: a.duration || 0, type: "audio" };
     }

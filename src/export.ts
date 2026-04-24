@@ -2,8 +2,19 @@
 // Renders the timeline frame-by-frame offscreen and encodes via VideoEncoder.
 // Audio is mixed via OfflineAudioContext (decoded with WebAudio) and encoded with AudioEncoder (AAC).
 import { Muxer, ArrayBufferTarget } from "mp4-muxer";
-import type { Project, VideoClip, AudioClip, EffectClip, TitleClip } from "./types";
-import { Compositor, combineEffects, NEUTRAL_COLOR, renderTitles } from "./webgl";
+import type {
+  Project,
+  VideoClip,
+  AudioClip,
+  EffectClip,
+  TitleClip,
+} from "./types";
+import {
+  Compositor,
+  combineEffects,
+  NEUTRAL_COLOR,
+  renderTitles,
+} from "./webgl";
 import { getBlob } from "./storage";
 
 export interface ExportOptions {
@@ -12,7 +23,10 @@ export interface ExportOptions {
   onProgress?: (frac: number, msg: string) => void;
 }
 
-export async function exportMp4(p: Project, opts: ExportOptions = {}): Promise<Blob> {
+export async function exportMp4(
+  p: Project,
+  opts: ExportOptions = {},
+): Promise<Blob> {
   if (typeof VideoEncoder === "undefined") {
     throw new Error("WebCodecs VideoEncoder not available in this browser.");
   }
@@ -57,7 +71,9 @@ export async function exportMp4(p: Project, opts: ExportOptions = {}): Promise<B
   for (const codec of codecsToTry) {
     try {
       const support = await VideoEncoder.isConfigSupported({
-        codec, width: W, height: H,
+        codec,
+        width: W,
+        height: H,
         bitrate: opts.videoBitrate ?? 5_000_000,
         framerate: fps,
         avc: { format: "avc" },
@@ -67,18 +83,23 @@ export async function exportMp4(p: Project, opts: ExportOptions = {}): Promise<B
         configured = true;
         break;
       }
-    } catch { /* try next */ }
+    } catch {
+      /* try next */
+    }
   }
-  if (!configured) throw new Error("No supported H.264 encoder configuration found.");
+  if (!configured)
+    throw new Error("No supported H.264 encoder configuration found.");
 
   // ---------- OFFSCREEN COMPOSITOR ----------
   const glCanvas = new OffscreenCanvas(W, H);
   // Compositor expects HTMLCanvasElement; we adapt by creating a real canvas.
   const realCanvas = document.createElement("canvas");
-  realCanvas.width = W; realCanvas.height = H;
+  realCanvas.width = W;
+  realCanvas.height = H;
   const comp = new Compositor(realCanvas);
   const overlay = document.createElement("canvas");
-  overlay.width = W; overlay.height = H;
+  overlay.width = W;
+  overlay.height = H;
   const overlayCtx = overlay.getContext("2d")!;
   // Final compositor onto an OffscreenCanvas (RGBA -> VideoFrame).
   const finalCanvas = new OffscreenCanvas(W, H);
@@ -101,7 +122,9 @@ export async function exportMp4(p: Project, opts: ExportOptions = {}): Promise<B
     v.preload = "auto";
     await new Promise<void>((res, rej) => {
       v.addEventListener("loadeddata", () => res(), { once: true });
-      v.addEventListener("error", () => rej(new Error("source load")), { once: true });
+      v.addEventListener("error", () => rej(new Error("source load")), {
+        once: true,
+      });
     });
     videoEls.set(clip.mediaId, v);
   }
@@ -112,7 +135,10 @@ export async function exportMp4(p: Project, opts: ExportOptions = {}): Promise<B
 
   for (let f = 0; f < totalFrames; f++) {
     const t = f / fps;
-    onProgress(0.05 + 0.85 * (f / totalFrames), `encoding frame ${f + 1}/${totalFrames}`);
+    onProgress(
+      0.05 + 0.85 * (f / totalFrames),
+      `encoding frame ${f + 1}/${totalFrames}`,
+    );
 
     // Seek every active video clip to the right time.
     const activeVideos: { clip: VideoClip; el: HTMLVideoElement }[] = [];
@@ -129,14 +155,19 @@ export async function exportMp4(p: Project, opts: ExportOptions = {}): Promise<B
     // Compose with WebGL.
     comp.clear();
     const effectsActive: EffectClip[] = p.clips.filter(
-      (c): c is EffectClip => c.kind === "effect" && t >= c.start && t < c.start + c.duration,
+      (c): c is EffectClip =>
+        c.kind === "effect" && t >= c.start && t < c.start + c.duration,
     );
     const renderOrder = [...p.tracks].reverse();
     for (const tr of renderOrder) {
       if (tr.kind !== "video" || tr.hidden) continue;
       const trIdx = trackIndex.get(tr.id) ?? 0;
-      const applicable = effectsActive.filter((e) => (trackIndex.get(e.trackId) ?? 0) < trIdx);
-      const color = applicable.length ? combineEffects(applicable) : { ...NEUTRAL_COLOR };
+      const applicable = effectsActive.filter(
+        (e) => (trackIndex.get(e.trackId) ?? 0) < trIdx,
+      );
+      const color = applicable.length
+        ? combineEffects(applicable)
+        : { ...NEUTRAL_COLOR };
       const av = activeVideos.find((x) => x.clip.trackId === tr.id);
       if (!av) continue;
       const tex = comp.uploadFrame(`exp:${av.clip.id}`, av.el);
@@ -147,7 +178,8 @@ export async function exportMp4(p: Project, opts: ExportOptions = {}): Promise<B
     finalCtx.drawImage(realCanvas, 0, 0, W, H);
     overlayCtx.clearRect(0, 0, W, H);
     const titles = p.clips.filter(
-      (c): c is TitleClip => c.kind === "title" && t >= c.start && t < c.start + c.duration,
+      (c): c is TitleClip =>
+        c.kind === "title" && t >= c.start && t < c.start + c.duration,
     );
     if (titles.length) {
       renderTitles(overlayCtx, W, H, titles);
@@ -188,7 +220,8 @@ export async function exportMp4(p: Project, opts: ExportOptions = {}): Promise<B
     const total = audioBuffer.length;
     const interleaved = new Float32Array(chunkSize * 2);
     const left = audioBuffer.getChannelData(0);
-    const right = audioBuffer.numberOfChannels > 1 ? audioBuffer.getChannelData(1) : left;
+    const right =
+      audioBuffer.numberOfChannels > 1 ? audioBuffer.getChannelData(1) : left;
     let pos = 0;
     while (pos < total) {
       const n = Math.min(chunkSize, total - pos);
@@ -258,20 +291,34 @@ function timelineDuration(p: Project): number {
 }
 
 /** Mix all audio sources (clip audio + audio clips) into a single stereo AudioBuffer. */
-async function mixAudio(p: Project, sampleRate: number): Promise<AudioBuffer | null> {
+async function mixAudio(
+  p: Project,
+  sampleRate: number,
+): Promise<AudioBuffer | null> {
   const dur = timelineDuration(p);
   const length = Math.ceil(dur * sampleRate);
   if (length <= 0) return null;
-  const ctx = new OfflineAudioContext({ numberOfChannels: 2, length, sampleRate });
+  const ctx = new OfflineAudioContext({
+    numberOfChannels: 2,
+    length,
+    sampleRate,
+  });
 
   let any = false;
   // Decode each unique source once and keep the AudioBuffer.
   const decoded = new Map<string, AudioBuffer>();
-  const decodeCtx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+  const decodeCtx = new (
+    window.AudioContext ||
+    (window as unknown as { webkitAudioContext: typeof AudioContext })
+      .webkitAudioContext
+  )();
 
   const sources = [
     ...p.clips
-      .filter((c): c is VideoClip => c.kind === "video" && c.useOwnAudio && c.volume > 0)
+      .filter(
+        (c): c is VideoClip =>
+          c.kind === "video" && c.useOwnAudio && c.volume > 0,
+      )
       .map((c) => ({ clip: c, mediaId: c.mediaId })),
     ...p.clips
       .filter((c): c is AudioClip => c.kind === "audio" && c.volume > 0)
@@ -300,7 +347,11 @@ async function mixAudio(p: Project, sampleRate: number): Promise<AudioBuffer | n
     const gain = ctx.createGain();
     gain.gain.value = (s.clip as VideoClip | AudioClip).volume;
     src.connect(gain).connect(ctx.destination);
-    src.start(s.clip.start, (s.clip as VideoClip | AudioClip).inPoint, s.clip.duration * (s.clip as VideoClip | AudioClip).speed);
+    src.start(
+      s.clip.start,
+      (s.clip as VideoClip | AudioClip).inPoint,
+      s.clip.duration * (s.clip as VideoClip | AudioClip).speed,
+    );
     any = true;
   }
   decodeCtx.close();

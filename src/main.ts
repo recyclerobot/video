@@ -87,8 +87,10 @@ function sizePreviewCanvases(): void {
   const wrap = document.getElementById("canvasWrap")!;
   const r = wrap.getBoundingClientRect();
   const ar = project.width / project.height;
-  let w = r.width - 24, h = r.height - 24;
-  if (w / h > ar) w = h * ar; else h = w / ar;
+  let w = r.width - 24,
+    h = r.height - 24;
+  if (w / h > ar) w = h * ar;
+  else h = w / ar;
   for (const c of [canvas, overlay]) {
     c.style.width = `${w}px`;
     c.style.height = `${h}px`;
@@ -112,13 +114,15 @@ function persist(): void {
 function setStatus(msg: string): void {
   const el = document.getElementById("status")!;
   el.textContent = msg;
-  setTimeout(() => { if (el.textContent === msg) el.textContent = ""; }, 1500);
+  setTimeout(() => {
+    if (el.textContent === msg) el.textContent = "";
+  }, 1500);
 }
 
 // ---------- TIME UTILS ----------
 function fmtTime(t: number): string {
   const mm = Math.floor(t / 60);
-  const ss = (t - mm * 60);
+  const ss = t - mm * 60;
   return `${String(mm).padStart(2, "0")}:${ss.toFixed(2).padStart(5, "0")}`;
 }
 
@@ -184,7 +188,9 @@ function renderLibrary(): void {
       e.stopPropagation();
       const id = b.getAttribute("data-del")!;
       project.media = project.media.filter((m) => m.id !== id);
-      project.clips = project.clips.filter((c) => !("mediaId" in c) || c.mediaId !== id);
+      project.clips = project.clips.filter(
+        (c) => !("mediaId" in c) || c.mediaId !== id,
+      );
       renderLibrary();
       drawTimeline();
       persist();
@@ -193,39 +199,51 @@ function renderLibrary(): void {
 }
 
 function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[m]!);
+  return s.replace(
+    /[&<>"']/g,
+    (m) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
+        m
+      ]!,
+  );
 }
 
-async function addMediaToTimeline(m: MediaAsset, trackId?: string, start?: number): Promise<void> {
+async function addMediaToTimeline(
+  m: MediaAsset,
+  trackId?: string,
+  start?: number,
+): Promise<void> {
   const kind: "video" | "audio" = m.type;
-  const track = (trackId ? project.tracks.find((t) => t.id === trackId) : null)
-    ?? project.tracks.find((t) => t.kind === kind);
+  const track =
+    (trackId ? project.tracks.find((t) => t.id === trackId) : null) ??
+    project.tracks.find((t) => t.kind === kind);
   if (!track) return;
   const startT = start ?? endOfTrack(track.id);
-  const clip: Clip = kind === "video"
-    ? {
-        id: newId("c"),
-        kind: "video",
-        trackId: track.id,
-        mediaId: m.id,
-        start: startT,
-        duration: m.duration,
-        inPoint: 0,
-        speed: 1,
-        useOwnAudio: true,
-        volume: 1,
-      } as VideoClip
-    : {
-        id: newId("c"),
-        kind: "audio",
-        trackId: track.id,
-        mediaId: m.id,
-        start: startT,
-        duration: m.duration,
-        inPoint: 0,
-        speed: 1,
-        volume: 1,
-      } as AudioClip;
+  const clip: Clip =
+    kind === "video"
+      ? ({
+          id: newId("c"),
+          kind: "video",
+          trackId: track.id,
+          mediaId: m.id,
+          start: startT,
+          duration: m.duration,
+          inPoint: 0,
+          speed: 1,
+          useOwnAudio: true,
+          volume: 1,
+        } as VideoClip)
+      : ({
+          id: newId("c"),
+          kind: "audio",
+          trackId: track.id,
+          mediaId: m.id,
+          start: startT,
+          duration: m.duration,
+          inPoint: 0,
+          speed: 1,
+          volume: 1,
+        } as AudioClip);
   project.clips.push(clip);
   await preloadClip(clip);
   drawTimeline();
@@ -311,7 +329,9 @@ function drawTimeline(): void {
 
     const lane = trEl.querySelector(".track-lane") as HTMLDivElement;
     // Drop target
-    lane.addEventListener("dragover", (ev) => { ev.preventDefault(); });
+    lane.addEventListener("dragover", (ev) => {
+      ev.preventDefault();
+    });
     lane.addEventListener("drop", async (ev) => {
       ev.preventDefault();
       const mediaId = ev.dataTransfer?.getData("application/x-media-id");
@@ -319,7 +339,10 @@ function drawTimeline(): void {
       const m = project.media.find((x) => x.id === mediaId);
       if (!m) return;
       // Reject mismatch (drop video onto audio track or vice versa)
-      if ((tr.kind === "video" && m.type !== "video") || (tr.kind === "audio" && m.type !== "audio")) {
+      if (
+        (tr.kind === "video" && m.type !== "video") ||
+        (tr.kind === "audio" && m.type !== "audio")
+      ) {
         setStatus(`can't drop ${m.type} on ${tr.kind} track`);
         return;
       }
@@ -342,25 +365,27 @@ function drawTimeline(): void {
   }
 
   // Track header buttons
-  tracksContainer.querySelectorAll<HTMLButtonElement>("[data-act]").forEach((b) => {
-    b.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const id = b.dataset.id!;
-      const act = b.dataset.act;
-      const tr = project.tracks.find((x) => x.id === id);
-      if (!tr) return;
-      if (act === "mute") tr.muted = !tr.muted;
-      if (act === "hide") tr.hidden = !tr.hidden;
-      if (act === "rmtrack") {
-        if (!confirm(`Delete track "${tr.name}" and its clips?`)) return;
-        project.tracks = project.tracks.filter((x) => x.id !== id);
-        project.clips = project.clips.filter((c) => c.trackId !== id);
-      }
-      drawTimeline();
-      engine.renderFrame();
-      persist();
+  tracksContainer
+    .querySelectorAll<HTMLButtonElement>("[data-act]")
+    .forEach((b) => {
+      b.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const id = b.dataset.id!;
+        const act = b.dataset.act;
+        const tr = project.tracks.find((x) => x.id === id);
+        if (!tr) return;
+        if (act === "mute") tr.muted = !tr.muted;
+        if (act === "hide") tr.hidden = !tr.hidden;
+        if (act === "rmtrack") {
+          if (!confirm(`Delete track "${tr.name}" and its clips?`)) return;
+          project.tracks = project.tracks.filter((x) => x.id !== id);
+          project.clips = project.clips.filter((c) => c.trackId !== id);
+        }
+        drawTimeline();
+        engine.renderFrame();
+        persist();
+      });
     });
-  });
 
   drawPlayhead();
 }
@@ -384,7 +409,8 @@ function makeClipEl(c: Clip): HTMLDivElement {
     const m = project.media.find((x) => x.id === c.mediaId);
     label = m?.name ?? "(missing media)";
     if (c.speed !== 1) label += ` ·${c.speed}×`;
-  } else if (c.kind === "title") label = `T: ${c.text.split("\n")[0].slice(0, 30) || "(empty)"}`;
+  } else if (c.kind === "title")
+    label = `T: ${c.text.split("\n")[0].slice(0, 30) || "(empty)"}`;
   else if (c.kind === "effect") label = "FX";
   div.innerHTML = `<div class="handle left"></div><span>${escapeHtml(label)}</span><div class="handle right"></div>`;
 
@@ -396,22 +422,32 @@ function makeClipEl(c: Clip): HTMLDivElement {
     drawTimeline();
     startDrag(e, c, "move");
   });
-  (div.querySelector(".handle.left") as HTMLDivElement).addEventListener("mousedown", (e) => {
-    e.stopPropagation();
-    selection = { type: "clip", id: c.id };
-    renderInspector();
-    startDrag(e, c, "trim-left");
-  });
-  (div.querySelector(".handle.right") as HTMLDivElement).addEventListener("mousedown", (e) => {
-    e.stopPropagation();
-    selection = { type: "clip", id: c.id };
-    renderInspector();
-    startDrag(e, c, "trim-right");
-  });
+  (div.querySelector(".handle.left") as HTMLDivElement).addEventListener(
+    "mousedown",
+    (e) => {
+      e.stopPropagation();
+      selection = { type: "clip", id: c.id };
+      renderInspector();
+      startDrag(e, c, "trim-left");
+    },
+  );
+  (div.querySelector(".handle.right") as HTMLDivElement).addEventListener(
+    "mousedown",
+    (e) => {
+      e.stopPropagation();
+      selection = { type: "clip", id: c.id };
+      renderInspector();
+      startDrag(e, c, "trim-right");
+    },
+  );
   return div;
 }
 
-function startDrag(ev: MouseEvent, clip: Clip, mode: "move" | "trim-left" | "trim-right"): void {
+function startDrag(
+  ev: MouseEvent,
+  clip: Clip,
+  mode: "move" | "trim-left" | "trim-right",
+): void {
   ev.preventDefault();
   const startX = ev.clientX;
   const orig = { ...clip };
@@ -440,10 +476,15 @@ function startDrag(ev: MouseEvent, clip: Clip, mode: "move" | "trim-left" | "tri
       const newDur = Math.max(0.05, orig.duration + dx);
       // Clamp media clips by source duration
       if (target.kind === "video" || target.kind === "audio") {
-        const m = project.media.find((mm) => mm.id === (target as VideoClip | AudioClip).mediaId);
+        const m = project.media.find(
+          (mm) => mm.id === (target as VideoClip | AudioClip).mediaId,
+        );
         const speed = (target as VideoClip | AudioClip).speed;
         const maxDur = m
-          ? Math.max(0.05, (m.duration - (target as VideoClip | AudioClip).inPoint) / speed)
+          ? Math.max(
+              0.05,
+              (m.duration - (target as VideoClip | AudioClip).inPoint) / speed,
+            )
           : newDur;
         target.duration = Math.min(newDur, maxDur);
       } else {
@@ -525,7 +566,9 @@ function videoControls(c: VideoClip): HTMLElement {
     </div>
   `;
   bindInputs(wrap, c, ["inPoint", "speed", "volume", "useOwnAudio"]);
-  wrap.querySelector("#decoupleBtn")!.addEventListener("click", () => decoupleAudio(c));
+  wrap
+    .querySelector("#decoupleBtn")!
+    .addEventListener("click", () => decoupleAudio(c));
   return wrap;
 }
 
@@ -559,7 +602,9 @@ function titleControls(c: TitleClip): HTMLElement {
   bindInputs(wrap, c, ["text", "fontSize", "color", "bgColor", "x", "y"]);
   wrap.querySelector("#bgTransparentBtn")!.addEventListener("click", () => {
     c.bgColor = "transparent";
-    persist(); engine.renderFrame(); renderInspector();
+    persist();
+    engine.renderFrame();
+    renderInspector();
   });
   return wrap;
 }
@@ -575,28 +620,52 @@ function effectControls(c: EffectClip): HTMLElement {
     <div class="row"><label>Tint</label><input type="color" value="${c.tint}" data-k="tint" /></div>
     <div class="row"><label>Tint amt</label><input type="range" min="0" max="1" step="0.01" value="${c.tintAmount}" data-k="tintAmount" /></div>
   `;
-  bindInputs(wrap, c, ["brightness", "contrast", "saturation", "hue", "tint", "tintAmount"]);
+  bindInputs(wrap, c, [
+    "brightness",
+    "contrast",
+    "saturation",
+    "hue",
+    "tint",
+    "tintAmount",
+  ]);
   return wrap;
 }
 
-function bindInputs<T extends Clip>(root: HTMLElement, clip: T, keys: (keyof T)[]): void {
+function bindInputs<T extends Clip>(
+  root: HTMLElement,
+  clip: T,
+  keys: (keyof T)[],
+): void {
   for (const k of keys) {
-    const el = root.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[data-k="${String(k)}"]`);
+    const el = root.querySelector<HTMLInputElement | HTMLTextAreaElement>(
+      `[data-k="${String(k)}"]`,
+    );
     if (!el) continue;
     el.addEventListener("input", () => {
       let v: unknown;
-      if (el instanceof HTMLInputElement && el.type === "checkbox") v = el.checked;
-      else if (el instanceof HTMLInputElement && (el.type === "number" || el.type === "range")) v = parseFloat(el.value);
+      if (el instanceof HTMLInputElement && el.type === "checkbox")
+        v = el.checked;
+      else if (
+        el instanceof HTMLInputElement &&
+        (el.type === "number" || el.type === "range")
+      )
+        v = parseFloat(el.value);
       else v = el.value;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (clip as any)[k] = v;
       drawTimeline();
       engine.renderFrame();
       // sync media element if relevant
-      if ((k === "useOwnAudio" || k === "volume") && (clip as Clip).kind === "video") {
+      if (
+        (k === "useOwnAudio" || k === "volume") &&
+        (clip as Clip).kind === "video"
+      ) {
         const v2 = clip as unknown as VideoClip;
         const el2 = videoElCache.get(v2.id);
-        if (el2) { el2.muted = !v2.useOwnAudio; el2.volume = v2.volume; }
+        if (el2) {
+          el2.muted = !v2.useOwnAudio;
+          el2.volume = v2.volume;
+        }
       }
       persist();
     });
@@ -606,7 +675,9 @@ function bindInputs<T extends Clip>(root: HTMLElement, clip: T, keys: (keyof T)[
 // ---------- ACTIONS ----------
 function decoupleAudio(c: VideoClip): void {
   c.useOwnAudio = false;
-  const audioTrack = project.tracks.find((t) => t.kind === "audio") ?? addTrack("audio", "Audio");
+  const audioTrack =
+    project.tracks.find((t) => t.kind === "audio") ??
+    addTrack("audio", "Audio");
   const audio: AudioClip = {
     id: newId("c"),
     kind: "audio",
@@ -633,28 +704,53 @@ function addTrack(kind: Track["kind"], name: string): Track {
 }
 
 function addTitleClip(): void {
-  const tr = project.tracks.find((t) => t.kind === "title") ?? addTrack("title", "Titles");
+  const tr =
+    project.tracks.find((t) => t.kind === "title") ??
+    addTrack("title", "Titles");
   const c: TitleClip = {
-    id: newId("c"), kind: "title", trackId: tr.id,
-    start: engine.time, duration: 3,
-    text: "Title", fontSize: 64, color: "#ffffff", bgColor: "transparent",
-    x: 0.5, y: 0.5,
+    id: newId("c"),
+    kind: "title",
+    trackId: tr.id,
+    start: engine.time,
+    duration: 3,
+    text: "Title",
+    fontSize: 64,
+    color: "#ffffff",
+    bgColor: "transparent",
+    x: 0.5,
+    y: 0.5,
   };
   project.clips.push(c);
   selection = { type: "clip", id: c.id };
-  drawTimeline(); renderInspector(); engine.renderFrame(); persist();
+  drawTimeline();
+  renderInspector();
+  engine.renderFrame();
+  persist();
 }
 
 function addEffectClip(): void {
-  const tr = project.tracks.find((t) => t.kind === "effect") ?? addTrack("effect", "Effects");
+  const tr =
+    project.tracks.find((t) => t.kind === "effect") ??
+    addTrack("effect", "Effects");
   const c: EffectClip = {
-    id: newId("c"), kind: "effect", trackId: tr.id,
-    start: engine.time, duration: 3,
-    brightness: 1, contrast: 1, saturation: 1, hue: 0, tint: "#000000", tintAmount: 0,
+    id: newId("c"),
+    kind: "effect",
+    trackId: tr.id,
+    start: engine.time,
+    duration: 3,
+    brightness: 1,
+    contrast: 1,
+    saturation: 1,
+    hue: 0,
+    tint: "#000000",
+    tintAmount: 0,
   };
   project.clips.push(c);
   selection = { type: "clip", id: c.id };
-  drawTimeline(); renderInspector(); engine.renderFrame(); persist();
+  drawTimeline();
+  renderInspector();
+  engine.renderFrame();
+  persist();
 }
 
 function splitSelected(): void {
@@ -667,14 +763,21 @@ function splitSelected(): void {
     return;
   }
   const offset = t - c.start;
-  const right: Clip = { ...c, id: newId("c"), start: t, duration: c.duration - offset };
+  const right: Clip = {
+    ...c,
+    id: newId("c"),
+    start: t,
+    duration: c.duration - offset,
+  };
   if (right.kind === "video" || right.kind === "audio") {
     const speed = (c as VideoClip | AudioClip).speed;
-    (right as VideoClip | AudioClip).inPoint = (c as VideoClip | AudioClip).inPoint + offset * speed;
+    (right as VideoClip | AudioClip).inPoint =
+      (c as VideoClip | AudioClip).inPoint + offset * speed;
   }
   c.duration = offset;
   project.clips.push(right);
-  drawTimeline(); persist();
+  drawTimeline();
+  persist();
 }
 
 function deleteSelected(): void {
@@ -683,7 +786,10 @@ function deleteSelected(): void {
   project.clips = project.clips.filter((x) => x.id !== id);
   engine.disposeClip(id);
   selection = null;
-  drawTimeline(); renderInspector(); engine.renderFrame(); persist();
+  drawTimeline();
+  renderInspector();
+  engine.renderFrame();
+  persist();
 }
 
 // ---------- TRANSPORT / TIME UI ----------
@@ -694,10 +800,19 @@ const zoomRange = document.getElementById("zoom") as HTMLInputElement;
 const timeDisplay = document.getElementById("timeDisplay") as HTMLSpanElement;
 
 playBtn.addEventListener("click", () => {
-  if (engine.playing) { engine.pause(); playBtn.textContent = "▶"; }
-  else { engine.play(); playBtn.textContent = "❚❚"; }
+  if (engine.playing) {
+    engine.pause();
+    playBtn.textContent = "▶";
+  } else {
+    engine.play();
+    playBtn.textContent = "❚❚";
+  }
 });
-stopBtn.addEventListener("click", () => { engine.pause(); engine.seek(0); playBtn.textContent = "▶"; });
+stopBtn.addEventListener("click", () => {
+  engine.pause();
+  engine.seek(0);
+  playBtn.textContent = "▶";
+});
 seekRange.addEventListener("input", () => {
   const dur = engine.duration();
   engine.seek((parseFloat(seekRange.value) / 100) * dur);
@@ -715,14 +830,24 @@ engine.onTime = (t) => {
 };
 
 document.getElementById("addTitleBtn")!.addEventListener("click", addTitleClip);
-document.getElementById("addEffectBtn")!.addEventListener("click", addEffectClip);
+document
+  .getElementById("addEffectBtn")!
+  .addEventListener("click", addEffectClip);
 document.getElementById("addVideoTrackBtn")!.addEventListener("click", () => {
-  addTrack("video", `Video ${project.tracks.filter((t) => t.kind === "video").length + 1}`);
-  drawTimeline(); persist();
+  addTrack(
+    "video",
+    `Video ${project.tracks.filter((t) => t.kind === "video").length + 1}`,
+  );
+  drawTimeline();
+  persist();
 });
 document.getElementById("addAudioTrackBtn")!.addEventListener("click", () => {
-  addTrack("audio", `Audio ${project.tracks.filter((t) => t.kind === "audio").length + 1}`);
-  drawTimeline(); persist();
+  addTrack(
+    "audio",
+    `Audio ${project.tracks.filter((t) => t.kind === "audio").length + 1}`,
+  );
+  drawTimeline();
+  persist();
 });
 document.getElementById("splitBtn")!.addEventListener("click", splitSelected);
 document.getElementById("deleteBtn")!.addEventListener("click", deleteSelected);
@@ -733,18 +858,28 @@ document.getElementById("newProjectBtn")!.addEventListener("click", () => {
   selection = null;
   videoElCache.clear();
   saveProject(project);
-  renderLibrary(); drawTimeline(); renderInspector();
+  renderLibrary();
+  drawTimeline();
+  renderInspector();
   engine.renderFrame();
 });
-document.getElementById("exportBtn")!.addEventListener("click", () => doExport());
+document
+  .getElementById("exportBtn")!
+  .addEventListener("click", () => doExport());
 
 // ---------- KEYBOARD ----------
 window.addEventListener("keydown", (e) => {
   const target = e.target as HTMLElement;
   if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
-  if (e.code === "Space") { e.preventDefault(); playBtn.click(); }
-  else if (e.code === "Delete" || e.code === "Backspace") { deleteSelected(); }
-  else if (e.key === "s" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); splitSelected(); }
+  if (e.code === "Space") {
+    e.preventDefault();
+    playBtn.click();
+  } else if (e.code === "Delete" || e.code === "Backspace") {
+    deleteSelected();
+  } else if (e.key === "s" && (e.metaKey || e.ctrlKey)) {
+    e.preventDefault();
+    splitSelected();
+  }
 });
 
 // ---------- EXPORT ----------
@@ -753,7 +888,9 @@ async function doExport(): Promise<void> {
   const toast = showToast("Preparing export…");
   try {
     const blob = await exportMp4(project, {
-      onProgress: (frac, msg) => { toast.set(`${(frac * 100).toFixed(0)}% — ${msg}`); },
+      onProgress: (frac, msg) => {
+        toast.set(`${(frac * 100).toFixed(0)}% — ${msg}`);
+      },
     });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -776,8 +913,12 @@ function showToast(msg: string): { set(s: string): void; dismiss(): void } {
   div.textContent = msg;
   document.body.appendChild(div);
   return {
-    set(s) { div.textContent = s; },
-    dismiss() { div.remove(); },
+    set(s) {
+      div.textContent = s;
+    },
+    dismiss() {
+      div.remove();
+    },
   };
 }
 
@@ -792,7 +933,11 @@ async function boot(): Promise<void> {
   if (missing.length) {
     setStatus(`${missing.length} media file(s) missing — re-import to restore`);
     project.media = project.media.filter((m) => !missing.includes(m.id));
-    project.clips = project.clips.filter((c) => !("mediaId" in c) || !missing.includes((c as VideoClip | AudioClip).mediaId));
+    project.clips = project.clips.filter(
+      (c) =>
+        !("mediaId" in c) ||
+        !missing.includes((c as VideoClip | AudioClip).mediaId),
+    );
   }
   // Preload video clips.
   for (const c of project.clips) {
