@@ -1,0 +1,16 @@
+#!/usr/bin/env sh
+# Pre-commit: rebuild static site into docs/ while preserving CNAME.
+# Skip when only docs/ files are being committed (avoid infinite loop).
+CHANGED=$(git diff --cached --name-only)
+if [ -z "$CHANGED" ]; then
+  exit 0
+fi
+
+NON_DOCS=$(echo "$CHANGED" | grep -v '^docs/' || true)
+if [ -z "$NON_DOCS" ]; then
+  echo "[pre-commit] only docs/ changes — skipping rebuild"
+  exit 0
+fi
+
+echo "[pre-commit] building static site into docs/"
+npm run build:docs
