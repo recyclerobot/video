@@ -1,0 +1,12 @@
+{
+  "name": "RR Video",
+  "short_name": "RR Video",
+  "description": "A browser-based, WebGL-powered video editor.",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#11131a",
+  "theme_color": "#11131a",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

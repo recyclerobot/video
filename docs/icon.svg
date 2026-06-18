@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#1e1e2e"/>
+  <polygon points="196,150 386,256 196,362" fill="#89b4fa"/>
+  <text x="256" y="448" font-family="system-ui, sans-serif" font-size="84" font-weight="700" fill="#f5c2e7" text-anchor="middle">RR</text>
+</svg>
