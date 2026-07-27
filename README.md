@@ -19,6 +19,7 @@ GPU, and export goes through the WebCodecs API. No uploads, no server.
 - **Shared render path** — preview and export composite through the same code (WYSIWYG)
 - **Export** — MP4 (H.264 + AAC) at chosen resolution / fps / bitrate, full timeline or a range, plus single-frame PNG
 - **Projects** — multiple projects in IndexedDB, autosave, and portable `.rrvproj` import/export
+- **Mobile & touch** — responsive single-pane layout with a bottom tab bar, touch drag/trim/fade, pinch-to-zoom the timeline, pinch-to-scale in the preview, and long-press for right-click actions
 - **PWA** — installable, works offline after first load
 
 See [ROADMAP.md](ROADMAP.md) for the phased plan this implements.
@@ -42,7 +43,7 @@ src/
   engine/             keyframes, transform, filters, compositor, text,
                       audio mixer, shared render path, playback engine
   media/              probing, element pool, image sequences, waveforms
-  ui/                 timeline, inspector, library
+  ui/                 timeline, inspector, library, gestures, mobile shell
   storage.ts          IndexedDB (blobs + projects)
   projectFile.ts      .rrvproj bundles
   export.ts           WebCodecs MP4 export (shared render path)
@@ -66,3 +67,17 @@ in `docs/` is preserved across builds.
 Export uses WebCodecs (`VideoEncoder`), which requires a recent Chromium-based
 browser (Chrome/Edge). LUTs use WebGL2 3D textures. Preview works wherever
 WebGL2 + Web Audio are available.
+
+On phones and tablets the layout collapses to the preview plus one pane at a
+time (Timeline / Media / Inspector) chosen from the bottom tab bar. Touch
+equivalents of the mouse interactions:
+
+| Action | Touch |
+| --- | --- |
+| Seek | tap an empty spot in a track lane |
+| Move / trim / fade a clip | drag the clip or its handle |
+| Scroll the timeline | one-finger drag on empty lane space |
+| Zoom the timeline | two-finger pinch |
+| Move / scale in the preview | one-finger drag / two-finger pinch |
+| Right-click (remove keyframe or transition) | long-press |
+| Add media to the timeline | the **＋** button on a library item |

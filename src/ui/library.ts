@@ -47,9 +47,17 @@ export class Library {
           <div class="name" title="${escapeHtml(m.name)}">${escapeHtml(m.name)}</div>
           <div class="dur">${m.type} · ${dur}</div>
         </div>
-        <button data-del="${m.id}" class="danger" style="padding:2px 6px;">×</button>`;
+        <div class="lib-actions">
+          <button data-add="${m.id}" title="Add to timeline">＋</button>
+          <button data-del="${m.id}" class="danger" title="Remove from library">×</button>
+        </div>`;
       div.addEventListener("dragstart", (ev) => ev.dataTransfer?.setData("application/x-media-id", m.id));
       div.addEventListener("dblclick", () => this.hooks.onAddMedia(m.id));
+      // Explicit button, because dragging onto the timeline is mouse-only.
+      div.querySelector<HTMLButtonElement>("[data-add]")!.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this.hooks.onAddMedia(m.id);
+      });
       div.querySelector<HTMLButtonElement>("[data-del]")!.addEventListener("click", (e) => {
         e.stopPropagation();
         this.hooks.onDeleteMedia(m.id);

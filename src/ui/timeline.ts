@@ -5,7 +5,14 @@ import type { EditorStore } from "../state/store";
 import type { PlaybackEngine } from "../engine/playback";
 import { addTransition, removeTransition } from "../state/commands";
 import { isAnimated, removeKeyframe } from "../engine/keyframes";
-import { fmtTime } from "../util";
+import {
+  attachPinch,
+  beginDrag,
+  isPrimaryDrag,
+  onLongPress,
+  TapTracker,
+} from "./gestures";
+import { clamp, fmtTime } from "../util";
 import { escapeHtml } from "../util";
 import type {
   AudioClip,
@@ -17,8 +24,11 @@ import type {
   VideoClip,
 } from "../types";
 
-const HEADER_W = 140;
+const DEFAULT_HEADER_W = 140;
 const SNAP_PX = 8;
+/** Zoom bounds, kept in sync with the transport's zoom slider. */
+const MIN_PPS = 20;
+const MAX_PPS = 400;
 
 const TRANSITION_CYCLE: TransitionType[] = [
   "crossfade",
@@ -30,12 +40,16 @@ const TRANSITION_CYCLE: TransitionType[] = [
 
 export interface TimelineHooks {
   onDropMedia(mediaId: string, trackId: string, start: number): void;
+  /** Fired when pinch-zoom changes the scale, so the zoom slider can follow. */
+  onZoomChange?(pps: number): void;
 }
 
 export class Timeline {
   ruler: HTMLElement;
   tracks: HTMLElement;
   scroll: HTMLElement;
+  /** Track-header width, mirrored from CSS (it shrinks on small screens). */
+  private headerW = DEFAULT_HEADER_W;
 
   constructor(
     root: HTMLElement,
@@ -47,10 +61,41 @@ export class Timeline {
     this.scroll = root.querySelector("#tracksScroll")!;
     this.tracks = root.querySelector("#tracksContainer")!;
     this.store.subscribe(() => this.render());
+    this.attachPinchZoom();
+  }
+
+  /** Two-finger pinch scales the timeline around the point between the fingers. */
+  private attachPinchZoom(): void {
+    let basePps = 0;
+    let anchorTime = 0;
+    attachPinch(this.scroll, {
+      onStart: (c) => {
+        basePps = this.pps;
+        const offset = c.x - this.scroll.getBoundingClientRect().left;
+        anchorTime = (this.scroll.scrollLeft + offset - this.headerW) / basePps;
+      },
+      onChange: (scale, c) => {
+        const next = Math.round(clamp(basePps * scale, MIN_PPS, MAX_PPS));
+        if (next === this.pps) return;
+        this.store.ui.zoomPps = next;
+        this.render();
+        const offset = c.x - this.scroll.getBoundingClientRect().left;
+        this.scroll.scrollLeft = Math.max(0, anchorTime * next + this.headerW - offset);
+        this.hooks.onZoomChange?.(next);
+      },
+    });
   }
 
   private get pps(): number {
     return this.store.ui.zoomPps;
+  }
+
+  /** Re-read --track-header-w so the ruler and playhead stay aligned with the lanes. */
+  private syncHeaderW(): void {
+    const v = parseFloat(
+      getComputedStyle(document.documentElement).getPropertyValue("--track-header-w"),
+    );
+    if (Number.isFinite(v) && v > 0) this.headerW = v;
   }
   private mediaById(id: string): MediaAsset | undefined {
     return this.store.getProject().media.find((m) => m.id === id);
@@ -83,6 +128,7 @@ export class Timeline {
   }
 
   render(): void {
+    this.syncHeaderW();
     const p = this.store.getProject();
     const pps = this.pps;
     const dur = this.engine.duration();
@@ -90,13 +136,13 @@ export class Timeline {
 
     // ruler
     this.ruler.textContent = "";
-    this.ruler.style.width = totalW + HEADER_W + "px";
-    this.ruler.style.paddingLeft = HEADER_W + "px";
+    this.ruler.style.width = totalW + this.headerW + "px";
+    this.ruler.style.paddingLeft = this.headerW + "px";
     const step = pickStep(pps);
     for (let s = 0; s <= dur + step; s += step) {
       const tick = document.createElement("div");
       tick.className = "ruler-tick";
-      tick.style.left = HEADER_W + s * pps + "px";
+      tick.style.left = this.headerW + s * pps + "px";
       tick.textContent = fmtTime(s);
       this.ruler.appendChild(tick);
     }
@@ -104,7 +150,7 @@ export class Timeline {
     for (const m of p.markers) {
       const mk = document.createElement("div");
       mk.className = "ruler-marker";
-      mk.style.left = HEADER_W + m.time * pps + "px";
+      mk.style.left = this.headerW + m.time * pps + "px";
       mk.style.background = m.color;
       mk.title = m.label;
       this.ruler.appendChild(mk);
@@ -113,14 +159,14 @@ export class Timeline {
     if (p.inPoint != null && p.outPoint != null && p.outPoint > p.inPoint) {
       const r = document.createElement("div");
       r.className = "ruler-range";
-      r.style.left = HEADER_W + p.inPoint * pps + "px";
+      r.style.left = this.headerW + p.inPoint * pps + "px";
       r.style.width = (p.outPoint - p.inPoint) * pps + "px";
       this.ruler.appendChild(r);
     }
 
     // tracks
     this.tracks.textContent = "";
-    this.tracks.style.width = HEADER_W + totalW + "px";
+    this.tracks.style.width = this.headerW + totalW + "px";
     for (const tr of p.tracks) {
       this.tracks.appendChild(this.buildTrack(tr, totalW));
     }
@@ -171,13 +217,28 @@ export class Timeline {
       const t = Math.max(0, x / this.pps);
       this.hooks.onDropMedia(mediaId, tr.id, this.snap(t, new Set()));
     });
-    // click to seek
-    lane.addEventListener("mousedown", (ev) => {
-      if ((ev.target as HTMLElement).closest(".clip, .transition")) return;
-      const x = ev.clientX - lane.getBoundingClientRect().left;
+    // Seek: mouse scrubs from the press, touch seeks on tap so a finger drag
+    // over empty lane still pans the timeline.
+    const seekTo = (clientX: number): void => {
+      const x = clientX - lane.getBoundingClientRect().left;
       this.engine.seek(Math.max(0, x / this.pps));
+    };
+    const onLane = (ev: PointerEvent): boolean =>
+      !(ev.target as HTMLElement).closest(".clip, .transition");
+    const tap = new TapTracker();
+    lane.addEventListener("pointerdown", (ev) => {
+      if (!onLane(ev)) return;
+      tap.down(ev);
+      if (ev.pointerType !== "mouse") return;
+      seekTo(ev.clientX);
       if (!ev.shiftKey) this.store.setSelection([]);
     });
+    lane.addEventListener("pointerup", (ev) => {
+      if (!tap.up(ev) || !onLane(ev)) return;
+      seekTo(ev.clientX);
+      this.store.setSelection([]);
+    });
+    lane.addEventListener("pointercancel", () => tap.reset());
 
     // clips
     const clips = p.clips.filter((c) => c.trackId === tr.id).sort((a, b) => a.start - b.start);
@@ -280,15 +341,15 @@ export class Timeline {
       fadeOutEl.style.right = Math.min(40, (a.fadeOut / c.duration) * (c.duration * pps)) + "px";
       div.appendChild(fadeInEl);
       div.appendChild(fadeOutEl);
-      fadeInEl.addEventListener("mousedown", (e) => this.startFade(e, c.id, "in"));
-      fadeOutEl.addEventListener("mousedown", (e) => this.startFade(e, c.id, "out"));
+      fadeInEl.addEventListener("pointerdown", (e) => this.startFade(e, c.id, "in"));
+      fadeOutEl.addEventListener("pointerdown", (e) => this.startFade(e, c.id, "out"));
     }
 
     // keyframe markers for the active prop on a singly-selected clip
     this.buildKeyframeMarkers(div, c);
 
     // interactions
-    div.addEventListener("mousedown", (e) => {
+    div.addEventListener("pointerdown", (e) => {
       const tEl = e.target as HTMLElement;
       if (tEl.classList.contains("handle") || tEl.classList.contains("fade-handle")) return;
       if (tr.locked) return;
@@ -296,13 +357,13 @@ export class Timeline {
       else if (!this.store.isSelected(c.id)) this.store.setSelection([c.id]);
       this.startMove(e, c.id);
     });
-    (div.querySelector(".handle.left") as HTMLElement).addEventListener("mousedown", (e) => {
+    (div.querySelector(".handle.left") as HTMLElement).addEventListener("pointerdown", (e) => {
       e.stopPropagation();
       if (tr.locked) return;
       this.store.setSelection([c.id]);
       this.startTrim(e, c.id, "left");
     });
-    (div.querySelector(".handle.right") as HTMLElement).addEventListener("mousedown", (e) => {
+    (div.querySelector(".handle.right") as HTMLElement).addEventListener("pointerdown", (e) => {
       e.stopPropagation();
       if (tr.locked) return;
       this.store.setSelection([c.id]);
@@ -321,20 +382,24 @@ export class Timeline {
       const d = document.createElement("div");
       d.className = "kf-marker";
       d.style.left = k.time * this.pps + "px";
-      d.title = `${prop} @ ${k.time.toFixed(2)}s = ${k.value}`;
-      d.addEventListener("mousedown", (e) => {
+      d.title = `${prop} @ ${k.time.toFixed(2)}s = ${k.value} — right-click / long-press to remove`;
+      d.addEventListener("pointerdown", (e) => {
         e.stopPropagation();
         if (e.button === 2) return;
         this.engine.seek(c.start + k.time);
       });
-      d.addEventListener("contextmenu", (e) => {
-        e.preventDefault();
+      const remove = (): void => {
         this.store.update("Remove keyframe", (p) => {
           const cc = p.clips.find((x) => x.id === c.id);
           if (cc) setProp(cc, prop, removeKeyframe(value, k.time));
         });
         this.engine.renderFrame();
+      };
+      d.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        remove();
       });
+      onLongPress(d, remove);
       div.appendChild(d);
     }
   }
@@ -355,8 +420,10 @@ export class Timeline {
         badge.classList.add("selected");
       badge.style.left = b.start * this.pps - 9 + "px";
       badge.textContent = existing ? "⇄" : "+";
-      badge.title = existing ? `${existing.type} (${existing.duration}s) — click to cycle, right-click to remove` : "add transition";
-      badge.addEventListener("mousedown", (e) => e.stopPropagation());
+      badge.title = existing
+        ? `${existing.type} (${existing.duration}s) — tap to cycle, long-press to remove`
+        : "add transition";
+      badge.addEventListener("pointerdown", (e) => e.stopPropagation());
       badge.addEventListener("click", (e) => {
         e.stopPropagation();
         if (!existing) {
@@ -371,19 +438,23 @@ export class Timeline {
         }
         this.engine.renderFrame();
       });
-      badge.addEventListener("contextmenu", (e) => {
-        e.preventDefault();
+      const remove = (): void => {
         if (existing) removeTransition(this.store, existing.id);
         this.engine.renderFrame();
+      };
+      badge.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        remove();
       });
+      onLongPress(badge, remove);
       lane.appendChild(badge);
     }
   }
 
   // ---- drags ----
-  private startMove(ev: MouseEvent, clipId: string): void {
+  private startMove(ev: PointerEvent, clipId: string): void {
+    if (!isPrimaryDrag(ev)) return;
     ev.preventDefault();
-    const startX = ev.clientX;
     this.store.beginTransaction("Move");
     const ids = this.store.ui.selectedClipIds.includes(clipId)
       ? [...this.store.ui.selectedClipIds]
@@ -392,99 +463,94 @@ export class Timeline {
     const orig = new Map(ids.map((id) => [id, p.clips.find((c) => c.id === id)!.start]));
     const primaryOrig = orig.get(clipId)!;
     const exclude = new Set(ids);
-    const onMove = (e: MouseEvent) => {
-      const dx = (e.clientX - startX) / this.pps;
-      const desired = Math.max(0, primaryOrig + dx);
-      const snapped = this.snap(desired, exclude);
-      const delta = snapped - primaryOrig;
-      this.store.mutateLive((pr) => {
-        for (const id of ids) {
-          const c = pr.clips.find((x) => x.id === id);
-          if (c) c.start = Math.max(0, (orig.get(id) ?? 0) + delta);
-        }
-      });
-      this.engine.renderFrame();
-    };
-    const onUp = () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-      this.store.commitTransaction();
-    };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
+    beginDrag(ev, {
+      onMove: (dxPx) => {
+        const dx = dxPx / this.pps;
+        const desired = Math.max(0, primaryOrig + dx);
+        const snapped = this.snap(desired, exclude);
+        const delta = snapped - primaryOrig;
+        this.store.mutateLive((pr) => {
+          for (const id of ids) {
+            const c = pr.clips.find((x) => x.id === id);
+            if (c) c.start = Math.max(0, (orig.get(id) ?? 0) + delta);
+          }
+        });
+        this.engine.renderFrame();
+      },
+      onEnd: (canceled) => this.endDrag(canceled),
+    });
   }
 
-  private startTrim(ev: MouseEvent, clipId: string, side: "left" | "right"): void {
+  private startTrim(ev: PointerEvent, clipId: string, side: "left" | "right"): void {
+    if (!isPrimaryDrag(ev)) return;
     ev.preventDefault();
-    const startX = ev.clientX;
     this.store.beginTransaction("Trim");
     const p = this.store.getProject();
     const c0 = structuredClone(p.clips.find((c) => c.id === clipId)!);
     const exclude = new Set([clipId]);
-    const onMove = (e: MouseEvent) => {
-      const dx = (e.clientX - startX) / this.pps;
-      this.store.mutateLive((pr) => {
-        const c = pr.clips.find((x) => x.id === clipId);
-        if (!c) return;
-        if (side === "left") {
-          let newStart = this.snap(Math.max(0, c0.start + dx), exclude);
-          const delta = newStart - c0.start;
-          const newDur = c0.duration - delta;
-          if (newDur < 0.05) return;
-          c.start = newStart;
-          c.duration = newDur;
-          if (c.kind === "video" || c.kind === "audio")
-            c.inPoint = Math.max(0, (c0 as VideoClip).inPoint + delta * (c0 as VideoClip).speed);
-          else if (c.kind === "sequence")
-            (c as SequenceClip).inFrame = Math.max(0, Math.round((c0 as SequenceClip).inFrame + delta * (c0 as SequenceClip).speed * (c0 as SequenceClip).sourceFps));
-        } else {
-          let newEnd = this.snap(c0.start + Math.max(0.05, c0.duration + dx), exclude);
-          let newDur = Math.max(0.05, newEnd - c0.start);
-          if (c.kind === "video" || c.kind === "audio") {
-            const m = this.mediaById((c as VideoClip).mediaId);
-            const speed = (c as VideoClip).speed;
-            if (m && m.duration > 0) {
-              const maxDur = Math.max(0.05, (m.duration - (c as VideoClip).inPoint) / speed);
-              newDur = Math.min(newDur, maxDur);
+    beginDrag(ev, {
+      onMove: (dxPx) => {
+        const dx = dxPx / this.pps;
+        this.store.mutateLive((pr) => {
+          const c = pr.clips.find((x) => x.id === clipId);
+          if (!c) return;
+          if (side === "left") {
+            let newStart = this.snap(Math.max(0, c0.start + dx), exclude);
+            const delta = newStart - c0.start;
+            const newDur = c0.duration - delta;
+            if (newDur < 0.05) return;
+            c.start = newStart;
+            c.duration = newDur;
+            if (c.kind === "video" || c.kind === "audio")
+              c.inPoint = Math.max(0, (c0 as VideoClip).inPoint + delta * (c0 as VideoClip).speed);
+            else if (c.kind === "sequence")
+              (c as SequenceClip).inFrame = Math.max(0, Math.round((c0 as SequenceClip).inFrame + delta * (c0 as SequenceClip).speed * (c0 as SequenceClip).sourceFps));
+          } else {
+            let newEnd = this.snap(c0.start + Math.max(0.05, c0.duration + dx), exclude);
+            let newDur = Math.max(0.05, newEnd - c0.start);
+            if (c.kind === "video" || c.kind === "audio") {
+              const m = this.mediaById((c as VideoClip).mediaId);
+              const speed = (c as VideoClip).speed;
+              if (m && m.duration > 0) {
+                const maxDur = Math.max(0.05, (m.duration - (c as VideoClip).inPoint) / speed);
+                newDur = Math.min(newDur, maxDur);
+              }
             }
+            c.duration = newDur;
           }
-          c.duration = newDur;
-        }
-      });
-      this.engine.renderFrame();
-    };
-    const onUp = () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-      this.store.commitTransaction();
-    };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
+        });
+        this.engine.renderFrame();
+      },
+      onEnd: (canceled) => this.endDrag(canceled),
+    });
   }
 
-  private startFade(ev: MouseEvent, clipId: string, side: "in" | "out"): void {
+  private startFade(ev: PointerEvent, clipId: string, side: "in" | "out"): void {
+    if (!isPrimaryDrag(ev)) return;
     ev.preventDefault();
     ev.stopPropagation();
-    const startX = ev.clientX;
     this.store.beginTransaction("Fade");
     const p = this.store.getProject();
     const c0 = structuredClone(p.clips.find((c) => c.id === clipId)!) as AudioClip | VideoClip;
-    const onMove = (e: MouseEvent) => {
-      const dx = (e.clientX - startX) / this.pps;
-      this.store.mutateLive((pr) => {
-        const c = pr.clips.find((x) => x.id === clipId) as AudioClip | VideoClip | undefined;
-        if (!c) return;
-        if (side === "in") c.audio.fadeIn = Math.max(0, Math.min(c.duration, c0.audio.fadeIn + dx));
-        else c.audio.fadeOut = Math.max(0, Math.min(c.duration, c0.audio.fadeOut - dx));
-      });
-    };
-    const onUp = () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-      this.store.commitTransaction();
-    };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
+    beginDrag(ev, {
+      onMove: (dxPx) => {
+        const dx = dxPx / this.pps;
+        this.store.mutateLive((pr) => {
+          const c = pr.clips.find((x) => x.id === clipId) as AudioClip | VideoClip | undefined;
+          if (!c) return;
+          if (side === "in") c.audio.fadeIn = Math.max(0, Math.min(c.duration, c0.audio.fadeIn + dx));
+          else c.audio.fadeOut = Math.max(0, Math.min(c.duration, c0.audio.fadeOut - dx));
+        });
+      },
+      onEnd: (canceled) => this.endDrag(canceled),
+    });
+  }
+
+  /** A canceled pointer (browser took over to scroll/pinch) rolls the edit back. */
+  private endDrag(canceled: boolean): void {
+    if (canceled) this.store.cancelTransaction();
+    else this.store.commitTransaction();
+    this.engine.renderFrame();
   }
 
   // ---- playhead ----
@@ -496,14 +562,14 @@ export class Timeline {
       ph.className = "playhead";
       this.tracks.appendChild(ph);
     }
-    ph.style.left = HEADER_W + this.engine.time * this.pps + "px";
+    ph.style.left = this.headerW + this.engine.time * this.pps + "px";
   }
   updatePlayhead(): void {
     this.drawPlayhead();
     // auto-scroll to keep playhead visible
-    const x = HEADER_W + this.engine.time * this.pps;
+    const x = this.headerW + this.engine.time * this.pps;
     const view = this.scroll;
-    if (x < view.scrollLeft + HEADER_W || x > view.scrollLeft + view.clientWidth - 40) {
+    if (x < view.scrollLeft + this.headerW || x > view.scrollLeft + view.clientWidth - 40) {
       view.scrollLeft = x - view.clientWidth / 2;
     }
   }

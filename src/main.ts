@@ -43,6 +43,8 @@ import { computePeaks } from "./media/waveform";
 import { Timeline } from "./ui/timeline";
 import { Inspector } from "./ui/inspector";
 import { Library } from "./ui/library";
+import { attachPinch, beginDrag, isPrimaryDrag, type DragHandle } from "./ui/gestures";
+import { MobileShell, showToast } from "./ui/mobile";
 import { fmtTime, fmtTimecode, clamp } from "./util";
 
 // ---------------------------------------------------------------------------
@@ -110,6 +112,11 @@ app.innerHTML = `
     <div class="ruler" id="ruler"></div>
     <div class="tracks-scroll" id="tracksScroll"><div id="tracksContainer"></div></div>
   </section>
+  <nav class="tabbar" id="tabbar" role="tablist" aria-label="Panels">
+    <button data-pane="timeline" role="tab"><span class="ico">▤</span>Timeline</button>
+    <button data-pane="media" role="tab"><span class="ico">▦</span>Media</button>
+    <button data-pane="inspector" role="tab"><span class="ico">⚙</span>Inspector</button>
+  </nav>
 `;
 
 // ---------------------------------------------------------------------------
@@ -121,18 +128,30 @@ const engine = new PlaybackEngine(store.getProject(), canvas);
 
 const timeline = new Timeline(document.getElementById("timelineSection")!, store, engine, {
   onDropMedia: (mediaId, trackId, start) => addMediaToTimeline(mediaId, trackId, start),
+  onZoomChange: (pps) => (zoomRange.value = String(pps)),
 });
 new Inspector(document.querySelector(".inspector")!, store, engine);
 new Library(document.querySelector(".library")!, store, {
   onImportFiles: importFiles,
-  onAddMedia: (id) => addMediaToTimeline(id),
+  onAddMedia: (id) => {
+    addMediaToTimeline(id);
+    mobile.revealPane("timeline");
+  },
   onImportLut: importLut,
   onDeleteMedia: deleteMedia,
+});
+
+// Narrow screens collapse to one pane at a time; the shell owns that switch and
+// tells us to re-measure whenever the visible area changes.
+const mobile = new MobileShell(app, () => {
+  sizePreview();
+  timeline.render();
 });
 
 function setStatus(msg: string): void {
   const el = document.getElementById("status")!;
   el.textContent = msg;
+  if (mobile.isMobile) showToast(msg);
   window.setTimeout(() => {
     if (el.textContent === msg) el.textContent = "";
   }, 1800);
@@ -181,8 +200,9 @@ function sizePreview(): void {
   const r = wrap.getBoundingClientRect();
   const p = store.getProject();
   const ar = p.width / p.height;
-  let w = r.width - 24;
-  let h = r.height - 24;
+  const pad = window.matchMedia("(max-width: 860px)").matches ? 8 : 24;
+  let w = Math.max(1, r.width - pad);
+  let h = Math.max(1, r.height - pad);
   if (w / h > ar) w = h * ar;
   else h = w / ar;
   canvas.style.width = `${w}px`;
@@ -471,46 +491,90 @@ function addMarker(): void {
 // ---------------------------------------------------------------------------
 // Preview direct manipulation (move selected visual clip)
 // ---------------------------------------------------------------------------
-canvas.addEventListener("mousedown", (ev) => {
+const MOVABLE_KINDS = ["video", "image", "sequence", "title"];
+
+/** The clip the preview gestures act on, or null when nothing suitable is selected. */
+function selectedVisual(): VisualClip | null {
   const c = store.primarySelection();
-  if (!c || !["video", "image", "sequence", "title"].includes(c.kind)) return;
+  if (!c || !MOVABLE_KINDS.includes(c.kind)) return null;
+  return c as VisualClip;
+}
+
+let canvasDrag: DragHandle | null = null;
+
+// One finger / mouse button drags the selected clip around the frame.
+canvas.addEventListener("pointerdown", (ev) => {
+  if (!isPrimaryDrag(ev)) return;
+  const c = selectedVisual();
+  if (!c) return;
+  ev.preventDefault();
   const rect = canvas.getBoundingClientRect();
-  const startX = ev.clientX;
-  const startY = ev.clientY;
-  const vc = c as VisualClip;
   const lt = clamp(engine.time - c.start, 0, c.duration);
-  const baseX = sampleAt(vc.transform.x, lt);
-  const baseY = sampleAt(vc.transform.y, lt);
-  const animatedX = isAnimated(vc.transform.x);
-  const animatedY = isAnimated(vc.transform.y);
+  const baseX = sampleAt(c.transform.x, lt);
+  const baseY = sampleAt(c.transform.y, lt);
+  const animatedX = isAnimated(c.transform.x);
+  const animatedY = isAnimated(c.transform.y);
   store.beginTransaction("Move (preview)");
-  const onMove = (e: MouseEvent) => {
-    const dx = ((e.clientX - startX) / rect.width) * 2;
-    const dy = ((e.clientY - startY) / rect.height) * 2;
-    store.mutateLive((p) => {
-      const cc = p.clips.find((x) => x.id === c.id) as VisualClip | undefined;
-      if (!cc) return;
-      cc.transform.x = animatedX ? addKeyframe(cc.transform.x, lt, baseX + dx) : baseX + dx;
-      cc.transform.y = animatedY ? addKeyframe(cc.transform.y, lt, baseY + dy) : baseY + dy;
-    });
-    engine.renderFrame();
-  };
-  const onUp = () => {
-    window.removeEventListener("mousemove", onMove);
-    window.removeEventListener("mouseup", onUp);
-    store.commitTransaction();
-  };
-  window.addEventListener("mousemove", onMove);
-  window.addEventListener("mouseup", onUp);
+  canvasDrag = beginDrag(ev, {
+    onMove: (dxPx, dyPx) => {
+      const dx = (dxPx / rect.width) * 2;
+      const dy = (dyPx / rect.height) * 2;
+      store.mutateLive((p) => {
+        const cc = p.clips.find((x) => x.id === c.id) as VisualClip | undefined;
+        if (!cc) return;
+        cc.transform.x = animatedX ? addKeyframe(cc.transform.x, lt, baseX + dx) : baseX + dx;
+        cc.transform.y = animatedY ? addKeyframe(cc.transform.y, lt, baseY + dy) : baseY + dy;
+      });
+      engine.renderFrame();
+    },
+    onEnd: (canceled) => {
+      canvasDrag = null;
+      if (canceled) store.cancelTransaction();
+      else store.commitTransaction();
+      engine.renderFrame();
+    },
+  });
 });
+
+function scaleSelected(next: number): void {
+  const c = selectedVisual();
+  if (!c) return;
+  store.mutateLive((p) => {
+    const cc = p.clips.find((x) => x.id === c.id) as VisualClip | undefined;
+    if (cc) cc.transform.scale = clamp(next, 0.05, 6);
+  });
+  engine.renderFrame();
+}
+
+// Two fingers pinch-scale it — the touch counterpart of the wheel below.
+let pinching = false;
+let pinchBase = 1;
+attachPinch(canvas, {
+  onStart: () => {
+    canvasDrag?.cancel();
+    canvasDrag = null;
+    const c = selectedVisual();
+    if (!c || isAnimated(c.transform.scale)) return;
+    pinchBase = c.transform.scale as number;
+    pinching = true;
+    store.beginTransaction("Scale");
+  },
+  onChange: (scale) => {
+    if (pinching) scaleSelected(pinchBase * scale);
+  },
+  onEnd: () => {
+    if (pinching) store.commitTransaction();
+    pinching = false;
+  },
+});
+
 // wheel to scale selected visual clip
 canvas.addEventListener("wheel", (ev) => {
-  const c = store.primarySelection();
-  if (!c || !["video", "image", "sequence", "title"].includes(c.kind)) return;
+  const c = selectedVisual();
+  if (!c) return;
   ev.preventDefault();
-  const vc = c as VisualClip;
-  if (isAnimated(vc.transform.scale)) return;
-  const cur = vc.transform.scale as number;
+  if (isAnimated(c.transform.scale)) return;
+  const cur = c.transform.scale as number;
   const next = clamp(cur * (ev.deltaY < 0 ? 1.05 : 0.95), 0.05, 6);
   store.update("Scale", (p) => {
     const cc = p.clips.find((x) => x.id === c.id) as VisualClip | undefined;
@@ -682,7 +746,7 @@ function makeModal(title: string): { body: HTMLElement; close: () => void } {
   document.body.append(overlay);
   const close = () => overlay.remove();
   box.querySelector(".modal-x")!.addEventListener("click", close);
-  overlay.addEventListener("mousedown", (e) => {
+  overlay.addEventListener("pointerdown", (e) => {
     if (e.target === overlay) close();
   });
   return { body: box.querySelector(".modal-body")!, close };
